@@ -2,42 +2,402 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Кнопка "Играть"</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ваня прыгун</title>
     <style>
-        body {
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #87CEEB; /* Небесно-голубой фон */
+            font-family: 'Arial', sans-serif;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            padding: 0 30px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            pointer-events: none;
+        }
+        .d-pad, .action-btn {
+            display: flex;
+            gap: 25px;
+            pointer-events: auto;
+        }
+        .button {
+            width: 65px;
+            height: 65px;
+            background-color: rgba(255, 255, 255, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: #1a1a1a; /* Тёмный фон */
-            font-family: Arial, sans-serif;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transition: transform 0.1s ease, background-color 0.1s ease;
+            backdrop-filter: blur(5px); /* Добавляем размытие для лучшей видимости */
         }
-        .play-button {
-            padding: 15px 40px;
+        .button:active {
+            transform: scale(0.9);
+            background-color: rgba(255, 255, 255, 0.6);
+        }
+        .arrow-shape {
+            width: 0;
+            height: 0;
+            border-style: solid;
+        }
+        .arrow-left .arrow-shape {
+            border-width: 15px 25px 15px 0;
+            border-color: transparent white transparent transparent;
+        }
+        .arrow-right .arrow-shape {
+            border-width: 15px 0 15px 25px;
+            border-color: transparent transparent transparent white;
+        }
+        #jumpBtn {
+            width: 80px;
+            height: 80px;
             font-size: 24px;
-            font-weight: bold;
             color: white;
-            background: linear-gradient(to bottom, #4CAF50, #388E3C); /* Зелёный градиент */
-            border: none;
-            border-radius: 50px;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
-        }
-        .play-button:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
-            background: linear-gradient(to bottom, #5CBF60, #4CAF50); /* Светлее при наведении */
-        }
-        .play-button:active {
-            transform: translateY(1px);
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(255, 100, 0, 0.5); /* Более яркая тень */
+            background-color: rgba(255, 140, 0, 0.5); /* Оранжевый оттенок */
         }
     </style>
 </head>
 <body>
-    <button class="play-button" onclick="window.location.href='https://google.com'">Играть</button>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="controls">
+        <div class="d-pad">
+            <button id="leftBtn" class="button arrow-left"><div class="arrow-shape"></div></button>
+            <button id="rightBtn" class="button arrow-right"><div class="arrow-shape"></div></button>
+        </div>
+        <div class="action-btn">
+            <button id="jumpBtn" class="button">Прыжок</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const leftBtn = document.getElementById('leftBtn');
+        const rightBtn = document.getElementById('rightBtn');
+        const jumpBtn = document.getElementById('jumpBtn');
+
+        let canvasWidth = window.innerWidth;
+        let canvasHeight = window.innerHeight;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        // --- Игровые настройки ---
+        const UI_AREA_HEIGHT = 150;
+        let groundY = canvasHeight - UI_AREA_HEIGHT;
+        const gravity = 0.5;
+        const jumpStrength = 13;
+        let gameState = 'playing';
+        let score = 0;
+
+        // --- Платформы (Бутылки) ---
+        const platforms = [];
+        // ЗНАЧИТЕЛЬНО УВЕЛИЧИВАЕМ высоту тела бутылки, чтобы она была вытянута
+        const BOTTLE_BODY_HEIGHT = 100; // Теперь тело бутылки 100px (было 20-50px)
+        const BOTTLE_NECK_HEIGHT = 30;  // Горлышко остается прежним
+        const initialPlatformWidth = 180;
+        const minPlatformWidth = 50;
+        const platformWidthReduction = 2; 
+        const platformSpacing = 350;
+
+        function generatePlatforms() {
+            platforms.length = 0;
+            for(let i = 0; i < 150; i++) {
+                const x = 200 + i * platformSpacing;
+                // Y-координата - это верхняя грань тела бутылки,
+                // которая также является точкой соприкосновения игрока.
+                // Чтобы бутылки были ниже, мы устанавливаем их y,
+                // чтобы они почти касались земли, но не проваливались
+                const y = groundY - 50; 
+                const width = Math.max(minPlatformWidth, initialPlatformWidth - i * platformWidthReduction);
+                // p.height теперь BOTTLE_BODY_HEIGHT (100)
+                platforms.push({ x: x, y: y, width: width, height: BOTTLE_BODY_HEIGHT }); 
+            }
+        }
+
+        // --- Игрок ---
+        const player = {
+            radius: 30,
+            baseSpeedX: 4.5,
+            speedIncrement: 0.05, 
+            speedY: 0,
+            color: '#FFD700',
+            isOnGround: false,
+            isMovingLeft: false,
+            isMovingRight: false,
+            x: 0, y: 0,
+            name: "Ваня" // Ник игрока
+        };
+
+        // --- Камера ---
+        const camera = {
+            x: 0,
+            easing: 0.05,
+            zoom: 0.8
+        };
+        
+        function drawPlayer() {
+            // Рисуем ник "Ваня" над шариком
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 22px Arial';
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 4;
+            ctx.strokeText(player.name, player.x, player.y - player.radius - 12);
+            ctx.fillText(player.name, player.x, player.y - player.radius - 12);
+            ctx.restore();
+
+            // Рисуем шарик (игрок)
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = player.color;
+            ctx.fill();
+            ctx.strokeStyle = '#DAA520';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        function drawGround() {
+            const logicalCanvasWidth = canvasWidth / camera.zoom;
+            ctx.fillStyle = '#C21807'; // Красный/коричневый цвет земли
+            ctx.fillRect(camera.x, groundY, logicalCanvasWidth, canvasHeight);
+        }
+        
+        function drawBottle(p) {
+            const neckHeight = BOTTLE_NECK_HEIGHT; // 30px
+            const neckWidth = p.width * 0.25;
+            const capHeight = 8;
+            const capWidth = neckWidth + 4;
+            
+            // 1. Основное тело (нижняя, ВЫТЯНУТАЯ часть)
+            // p.y - верхняя грань. p.height - ВЫСОТА тела (100px)
+            ctx.fillStyle = 'rgba(152, 251, 152, 0.8)'; // Светло-зеленый
+            ctx.fillRect(p.x, p.y, p.width, p.height);
+
+            // Тень на теле для объема
+            ctx.fillStyle = 'rgba(34, 139, 34, 0.3)'; // Темно-зеленый
+            ctx.fillRect(p.x + p.width * 0.1, p.y, p.width * 0.8, p.height);
+
+            // 2. Горлышко. Оно начинается СВЕРХУ тела бутылки (на p.y)
+            ctx.fillStyle = 'rgba(142, 241, 142, 0.9)';
+            ctx.fillRect(p.x + p.width / 2 - neckWidth / 2, p.y - neckHeight, neckWidth, neckHeight);
+            
+            // 3. Крышка (Пробка). Начинается СВЕРХУ горлышка
+            ctx.fillStyle = '#696969'; // Темно-серый
+            ctx.fillRect(p.x + p.width / 2 - capWidth / 2, p.y - neckHeight - capHeight, capWidth, capHeight);
+        }
+
+        function drawPlatforms() {
+            platforms.forEach(drawBottle);
+        }
+
+        function drawUI() {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Сброс трансформаций для UI
+            
+            // Счет (слева вверху)
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 32px Arial';
+            ctx.shadowColor = 'black';
+            ctx.shadowBlur = 5;
+            ctx.fillText(`Счет: ${score}`, 20, 40);
+
+            // Название игры "Ваня прыгун" (справа вверху)
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'right';
+            ctx.font = 'bold 24px Arial';
+            ctx.shadowColor = 'black';
+            ctx.shadowBlur = 5;
+            ctx.fillText("Ваня прыгун", canvasWidth - 20, 40);
+
+            ctx.restore();
+        }
+        
+        function drawGameOver() {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 48px Arial';
+            ctx.fillText('Игра окончена', canvasWidth / 2, canvasHeight / 2 - 40);
+            
+            ctx.font = 'bold 36px Arial';
+            ctx.fillText(`Ваш счет: ${score}`, canvasWidth / 2, canvasHeight / 2 + 10);
+
+            ctx.font = '24px Arial';
+            ctx.fillText('Нажмите, чтобы начать заново', canvasWidth / 2, canvasHeight / 2 + 60);
+            ctx.restore();
+        }
+
+        function handleJump() {
+            if (player.isOnGround) {
+                player.speedY = -jumpStrength;
+                player.isOnGround = false;
+            }
+        }
+
+        function updatePlayer() {
+            const currentSpeedX = player.baseSpeedX + score * player.speedIncrement;
+            if (player.isMovingLeft) player.x -= currentSpeedX;
+            if (player.isMovingRight) player.x += currentSpeedX;
+
+            const previousY = player.y;
+            player.speedY += gravity;
+            player.y += player.speedY;
+            player.isOnGround = false;
+
+            platforms.forEach((p, index) => {
+                const playerRight = player.x + player.radius * 0.7; 
+                const playerLeft = player.x - player.radius * 0.7;
+                const platformRight = p.x + p.width;
+                const platformLeft = p.x;
+
+                // Проверка столкновения с верхней частью тела бутылки
+                if (player.speedY > 0 && 
+                    previousY + player.radius <= p.y && // Игрок был выше платформы
+                    player.y + player.radius >= p.y &&   // Игрок приземляется на платформу
+                    playerRight > platformLeft && playerLeft < platformRight
+                ) {
+                    player.y = p.y - player.radius;
+                    player.speedY = 0;
+                    player.isOnGround = true;
+                    score = Math.max(score, index + 1); // Обновляем счет
+                }
+            });
+
+            if (player.y + player.radius > groundY) {
+                gameState = 'gameOver';
+            }
+        }
+
+        function updateCamera() {
+            const targetX = player.x - (canvasWidth / (2 * camera.zoom));
+            camera.x += (targetX - camera.x) * camera.easing;
+        }
+
+        function gameLoop() {
+            if (gameState === 'playing') {
+                updatePlayer();
+                updateCamera();
+            }
+
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            ctx.save();
+            ctx.scale(camera.zoom, camera.zoom);
+            ctx.translate(-camera.x, 0);
+
+            drawGround();
+            drawPlatforms();
+            if (gameState === 'playing') {
+                drawPlayer();
+            }
+
+            ctx.restore();
+
+            if (gameState === 'gameOver') {
+                drawGameOver();
+            } else {
+                drawUI();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function resetGame() {
+            generatePlatforms();
+            const startPlatform = platforms[0];
+            // Игрок начинает над первой платформой
+            player.x = startPlatform.x + startPlatform.width / 2;
+            player.y = startPlatform.y - player.radius - 200; 
+            player.speedY = 0;
+            player.isOnGround = false;
+            score = 0;
+            camera.x = player.x - (canvasWidth / (2 * camera.zoom));
+            gameState = 'playing';
+        }
+        
+        function handlePrimaryAction() {
+            if (gameState === 'playing') {
+                handleJump();
+            } else if (gameState === 'gameOver') {
+                resetGame();
+            }
+        }
+
+        // --- Обработчики событий ---
+
+        window.addEventListener('resize', () => {
+            canvasWidth = window.innerWidth;
+            canvasHeight = window.innerHeight;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            groundY = canvasHeight - UI_AREA_HEIGHT;
+            resetGame();
+        });
+        
+        // Мобильные кнопки (Touch)
+        leftBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (gameState === 'playing') player.isMovingLeft = true; });
+        leftBtn.addEventListener('touchend', (e) => { e.preventDefault(); player.isMovingLeft = false; });
+        rightBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (gameState === 'playing') player.isMovingRight = true; });
+        rightBtn.addEventListener('touchend', (e) => { e.preventDefault(); player.isMovingRight = false; });
+        jumpBtn.addEventListener('touchstart', (e) => { e.preventDefault(); handlePrimaryAction(); });
+        
+        // Клик по экрану для перезапуска после проигрыша
+        canvas.addEventListener('touchstart', (e) => {
+             if (e.target === canvas && gameState === 'gameOver') {
+                e.preventDefault();
+                resetGame();
+             }
+        });
+
+        // Управление с клавиатуры
+        window.addEventListener('keydown', (e) => {
+            if (gameState === 'playing') {
+                if (e.code === 'ArrowLeft' || e.code === 'KeyA') player.isMovingLeft = true;
+                if (e.code === 'ArrowRight' || e.code === 'KeyD') player.isMovingRight = true;
+                if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') handleJump();
+            } else if (gameState === 'gameOver' && (e.code === 'Space' || e.code === 'Enter')) {
+                resetGame();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') player.isMovingLeft = false;
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') player.isMovingRight = false;
+        });
+
+        // Запуск игры
+        resetGame();
+        gameLoop();
+    </script>
+
 </body>
 </html>
